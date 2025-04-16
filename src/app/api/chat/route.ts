@@ -14,25 +14,13 @@ export async function POST(request: Request) {
   // Add debug logs to help troubleshoot issues
   console.log('API route called with OpenAI API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
   console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
-  console.log('NEXT_PUBLIC_MOCK_MODE:', process.env.NEXT_PUBLIC_MOCK_MODE);
   
   try {
     const body = await request.json();
-    const { action, threadId, message, useMockMode: clientMockMode } = body;
+    const { action, threadId, message } = body;
     
     console.log('API request action:', action);
     console.log('API request threadId:', threadId);
-    console.log('Client requested mock mode:', clientMockMode);
-    
-    // Use mock mode if API key is missing, if explicitly enabled in env, or if client requested it
-    const useMockMode = !process.env.OPENAI_API_KEY || 
-                        process.env.NEXT_PUBLIC_MOCK_MODE === 'true' || 
-                        clientMockMode === true;
-    
-    if (useMockMode) {
-      console.log('Using mock mode for OpenAI response');
-      return handleMockResponse(action, message);
-    }
     
     // Verify the OpenAI API key and Assistant ID
     if (!process.env.OPENAI_API_KEY) {
@@ -154,210 +142,206 @@ async function handleCreateThread(message: string) {
 }
 
 async function handleSendMessage(threadId: string, message: string) {
-  await openai.beta.threads.messages.create(threadId, {
-    role: 'user',
-    content: message,
-  });
+  console.log('Sending message to thread:', threadId, 'Message:', message);
   
-  const run = await openai.beta.threads.runs.create(threadId, {
-    assistant_id: ASSISTANT_ID,
-  });
-  
-  await waitForRunCompletion(threadId, run.id);
-  const response = await getLatestAssistantMessage(threadId);
-  
-  return NextResponse.json({ success: true, message: response });
+  try {
+    // Add the user's message to the thread
+    await openai.beta.threads.messages.create(threadId, {
+      role: 'user',
+      content: message,
+    });
+    console.log('Message added to thread');
+    
+    // Run the assistant
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: ASSISTANT_ID,
+    });
+    console.log('Run created:', run.id);
+    
+    // Wait for completion
+    await waitForRunCompletion(threadId, run.id);
+    console.log('Run completed');
+    
+    // Get the response
+    const response = await getLatestAssistantMessage(threadId);
+    console.log('Got response from assistant');
+    
+    return NextResponse.json({ success: true, message: response });
+  } catch (error) {
+    console.error('Error in handleSendMessage:', error);
+    throw error;
+  }
 }
 
 async function handleGenerateRecommendations(threadId: string) {
-  // Request recommendations in JSON format
-  await openai.beta.threads.messages.create(threadId, {
-    role: 'user',
-    content: "Please provide recommendations for my project in JSON format with \"materials\" and \"tools\" arrays. Each item should have a \"name\" property.",
-  });
+  console.log('Generating recommendations for thread:', threadId);
   
-  const run = await openai.beta.threads.runs.create(threadId, {
-    assistant_id: ASSISTANT_ID,
-  });
-  
-  await waitForRunCompletion(threadId, run.id);
-  
-  // Get messages and extract JSON
-  const messages = await openai.beta.threads.messages.list(threadId);
-  let recommendations = null;
-  
-  for (const message of messages.data) {
-    if (message.role === 'assistant' && message.content && message.content.length > 0) {
-      const content = message.content[0];
-      if (content.type === 'text') {
-        recommendations = extractJsonFromMessage(content.text.value);
-        if (recommendations) break;
-      }
-    }
-  }
-  
-  if (!recommendations) {
-    recommendations = getFallbackRecommendations();
-  } else {
-    // Add affiliate links
-    const addAffiliateLink = (item: any) => ({
-      ...item,
-      affiliate_url: item.affiliate_url || createAffiliateLink(item.name)
+  try {
+    // Run the assistant with a specific instruction to generate recommendations in JSON format
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: ASSISTANT_ID,
+      instructions: "Based on the conversation history, generate specific material and tool recommendations in JSON format. Use this format: ```json\n{\n  \"materials\": [\n    { \"name\": \"Item Name\" },\n    { \"name\": \"Item Name\" }\n  ],\n  \"tools\": [\n    { \"name\": \"Tool Name\" },\n    { \"name\": \"Tool Name\" }\n  ]\n}\n```"
     });
+    console.log('Run created:', run.id);
     
-    recommendations.materials = recommendations.materials.map(addAffiliateLink);
-    recommendations.tools = recommendations.tools.map(addAffiliateLink);
+    // Wait for completion
+    await waitForRunCompletion(threadId, run.id);
+    console.log('Run completed');
+    
+    // Get the response
+    const response = await getLatestAssistantMessage(threadId);
+    console.log('Got JSON response from assistant');
+    
+    // Extract JSON data
+    const jsonData = extractJsonFromMessage(response);
+    console.log('Extracted JSON data:', jsonData);
+    
+    if (jsonData) {
+      // Process the recommendations to add affiliate links if needed
+      const processedRecommendations = {
+        materials: jsonData.materials.map((material: { name: string }) => ({
+          name: material.name,
+          affiliateLink: createAffiliateLink(material.name)
+        })),
+        tools: jsonData.tools.map((tool: { name: string }) => ({
+          name: tool.name,
+          affiliateLink: createAffiliateLink(tool.name)
+        }))
+      };
+      
+      return NextResponse.json({
+        success: true,
+        recommendations: processedRecommendations
+      });
+    } else {
+      console.error('Failed to parse JSON recommendations from response');
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to generate recommendations',
+        recommendations: getFallbackRecommendations()
+      });
+    }
+  } catch (error) {
+    console.error('Error in handleGenerateRecommendations:', error);
+    console.log('Falling back to default recommendations');
+    return NextResponse.json({
+      success: false,
+      error: String(error),
+      recommendations: getFallbackRecommendations()
+    });
   }
-  
-  return NextResponse.json({ success: true, recommendations });
 }
 
 // Helper functions
 
-async function waitForRunCompletion(threadId: string, runId: string, maxAttempts = 15) {
-  let attempts = 0;
+async function waitForRunCompletion(threadId: string, runId: string) {
+  let run;
   
-  while (attempts < maxAttempts) {
-    const run = await openai.beta.threads.runs.retrieve(threadId, runId);
+  // Poll for status every 1 second
+  do {
+    run = await openai.beta.threads.runs.retrieve(threadId, runId);
     
-    if (run.status === 'completed') {
-      return;
+    console.log('Run status:', run.status);
+    
+    if (run.status === 'requires_action') {
+      // Handle if function calling is required (not used in this basic example)
+      console.log('Run requires action:', run.required_action);
+      
+      // In a more complex scenario, we would handle tool calls here
+      break;
     }
     
     if (run.status === 'failed' || run.status === 'cancelled' || run.status === 'expired') {
-      throw new Error(`Run ended with status: ${run.status}`);
+      console.error('Run failed with status:', run.status);
+      if (run.last_error) {
+        console.error('Error:', run.last_error);
+      }
+      break;
     }
     
-    // Wait before checking again
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    attempts++;
-  }
+    if (run.status !== 'completed') {
+      // Wait before checking again
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } while (run.status !== 'completed');
   
-  throw new Error('Run did not complete in the expected timeframe');
+  return run;
 }
 
 async function getLatestAssistantMessage(threadId: string) {
-  const messages = await openai.beta.threads.messages.list(threadId);
+  const messages = await openai.beta.threads.messages.list(threadId, {
+    order: 'desc',
+    limit: 1,
+  });
   
-  for (const message of messages.data) {
-    if (message.role === 'assistant' && message.content && message.content.length > 0) {
-      const content = message.content[0];
-      if (content.type === 'text') {
-        return content.text.value;
-      }
+  if (messages.data.length === 0 || messages.data[0].role !== 'assistant') {
+    return "I apologize, but I couldn't generate a response at this time.";
+  }
+  
+  let responseText = '';
+  
+  // Concatenate all content parts from the message
+  for (const contentPart of messages.data[0].content) {
+    if (contentPart.type === 'text') {
+      responseText += contentPart.text.value;
     }
   }
   
-  return 'I don\'t have a response at this time.';
+  return responseText;
 }
 
-function extractJsonFromMessage(message: string) {
+// Helper function to extract JSON data from a message
+function extractJsonFromMessage(message: string): { materials: Array<{ name: string }>, tools: Array<{ name: string }> } | null {
   try {
-    // Find JSON pattern in message
-    const jsonRegex = /\{[\s\S]*"materials"[\s\S]*"tools"[\s\S]*\}/;
-    const match = message.match(jsonRegex);
+    // Try to find JSON code block in the response
+    const jsonMatch = message.match(/```(?:json)?([\s\S]+?)```/);
     
-    if (match) {
-      const jsonStr = match[0];
-      const json = JSON.parse(jsonStr);
+    if (jsonMatch && jsonMatch[1]) {
+      // Parse the JSON part
+      const jsonStr = jsonMatch[1].trim();
+      const jsonData = JSON.parse(jsonStr);
       
-      // Validate the structure
-      if (json && Array.isArray(json.materials) && Array.isArray(json.tools)) {
-        return json;
+      // Validate basic structure
+      if (jsonData && jsonData.materials && jsonData.tools &&
+          Array.isArray(jsonData.materials) && Array.isArray(jsonData.tools)) {
+        return jsonData;
       }
     }
     
-    return null;
+    // If no JSON block found or invalid structure, check if entire message is JSON
+    const jsonData = JSON.parse(message);
+    if (jsonData && jsonData.materials && jsonData.tools &&
+        Array.isArray(jsonData.materials) && Array.isArray(jsonData.tools)) {
+      return jsonData;
+    }
   } catch (error) {
-    console.error('Error extracting JSON from message:', error);
-    return null;
+    console.error('Error parsing JSON from message:', error);
   }
+  
+  return null;
 }
 
-function createAffiliateLink(productName: string): string {
-  const AFFILIATE_TAG = process.env.NEXT_PUBLIC_AFFILIATE_TAG || 'aiconstructio-20';
-  const encodedName = encodeURIComponent(productName).replace(/%20/g, "+");
-  return `https://www.amazon.com/s?k=${encodedName}&tag=${AFFILIATE_TAG}`;
+function createAffiliateLink(itemName: string): string {
+  const affiliateTag = process.env.NEXT_PUBLIC_AFFILIATE_TAG || 'diyassistant-20';
+  const searchQuery = encodeURIComponent(itemName);
+  return `https://www.amazon.com/s?k=${searchQuery}&tag=${affiliateTag}`;
 }
 
 function getFallbackRecommendations() {
   return {
     materials: [
-      { name: 'Ceramic Tiles', affiliate_url: createAffiliateLink('Ceramic Tiles') },
-      { name: 'Tile Adhesive', affiliate_url: createAffiliateLink('Tile Adhesive') },
-      { name: 'Grout', affiliate_url: createAffiliateLink('Grout') },
-      { name: 'Tile Spacers', affiliate_url: createAffiliateLink('Tile Spacers') },
-      { name: 'Waterproofing Membrane', affiliate_url: createAffiliateLink('Waterproofing Membrane') }
+      { name: "Drywall Sheets", affiliateLink: createAffiliateLink("Drywall Sheets") },
+      { name: "Wood Studs", affiliateLink: createAffiliateLink("Wood Studs") },
+      { name: "Joint Compound", affiliateLink: createAffiliateLink("Joint Compound") },
+      { name: "Primer", affiliateLink: createAffiliateLink("Wall Primer") },
+      { name: "Paint", affiliateLink: createAffiliateLink("Interior Wall Paint") }
     ],
     tools: [
-      { name: 'Tile Cutter', affiliate_url: createAffiliateLink('Tile Cutter') },
-      { name: 'Notched Trowel', affiliate_url: createAffiliateLink('Notched Trowel') },
-      { name: 'Rubber Mallet', affiliate_url: createAffiliateLink('Rubber Mallet') },
-      { name: 'Grout Float', affiliate_url: createAffiliateLink('Grout Float') },
-      { name: 'Level', affiliate_url: createAffiliateLink('Level Tool') }
+      { name: "Hammer", affiliateLink: createAffiliateLink("Hammer") },
+      { name: "Screwdriver Set", affiliateLink: createAffiliateLink("Screwdriver Set") },
+      { name: "Measuring Tape", affiliateLink: createAffiliateLink("Measuring Tape") },
+      { name: "Utility Knife", affiliateLink: createAffiliateLink("Utility Knife") },
+      { name: "Level", affiliateLink: createAffiliateLink("Level Tool") }
     ]
   };
-}
-
-function handleMockResponse(action: string, message: string) {
-  switch (action) {
-    case 'createThread': {
-      const mockThreadId = 'mock-thread-' + Date.now();
-      const mockResponse = getMockResponse(message);
-      
-      return NextResponse.json({ 
-        success: true, 
-        threadId: mockThreadId,
-        message: mockResponse
-      });
-    }
-    
-    case 'sendMessage': {
-      const mockResponse = getMockResponse(message);
-      return NextResponse.json({ success: true, message: mockResponse });
-    }
-    
-    case 'generateRecommendations': {
-      return NextResponse.json({
-        success: true,
-        recommendations: getFallbackRecommendations()
-      });
-    }
-    
-    default:
-      return NextResponse.json(
-        { success: false, error: 'Invalid action' },
-        { status: 400 }
-      );
-  }
-}
-
-function getMockResponse(message: string) {
-  // Convert to lowercase for easier matching
-  const lowerMessage = message.toLowerCase();
-
-  // Check for specific room mentions
-  if (lowerMessage.includes('bathroom')) {
-    return 'For a bathroom renovation, you\'ll want to consider waterproofing, proper ventilation, and moisture-resistant materials. What specific part of the bathroom are you working on?';
-  } else if (lowerMessage.includes('kitchen')) {
-    return 'Kitchen projects can range from simple updates to complete renovations. Are you focusing on cabinets, countertops, flooring, or something else?';
-  } else if (lowerMessage.includes('bedroom')) {
-    return 'Bedroom renovations can really improve your quality of life. Are you looking to install new flooring, add built-ins, update lighting, or something else?';
-  } else if (lowerMessage.includes('living room')) {
-    return 'Living room projects can transform your home\'s main gathering space. Are you interested in wall treatments, flooring updates, built-in shelving, or something else?';
-  } else if (lowerMessage.includes('tile') || lowerMessage.includes('tiling')) {
-    return 'Tiling projects require proper surface preparation, the right adhesives, and careful planning. What surface are you planning to tile?\n\n`json\n{\n  "materials": [\n    { "name": "Ceramic Tiles" },\n    { "name": "Tile Adhesive" },\n    { "name": "Grout" },\n    { "name": "Tile Spacers" }\n  ],\n  "tools": [\n    { "name": "Tile Cutter" },\n    { "name": "Notched Trowel" },\n    { "name": "Rubber Mallet" },\n    { "name": "Grout Float" }\n  ]\n}\n`';
-  } else if (lowerMessage === 'l') {
-    // Special case for the test input "L"
-    return 'I\'m your DIY construction assistant. I can help with home improvement projects, material recommendations, and step-by-step instructions. What project are you working on? Try mentioning a specific room like "bathroom," "kitchen," "bedroom," or "living room."';
-  } else if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
-    return 'Hello! I\'m your DIY construction assistant. What type of home improvement project are you planning? I can provide advice on materials, tools, and techniques.';
-  } else if (lowerMessage.includes('help')) {
-    return 'I can help with various construction projects around your home. Just tell me what you\'re working on - like kitchen renovation, bathroom remodeling, flooring installation, or wall repairs. I\'ll provide advice on materials, tools, and step-by-step guidance.';
-  } else if (lowerMessage.includes('cost') || lowerMessage.includes('budget') || lowerMessage.includes('price')) {
-    return 'Construction project costs vary widely depending on materials, scope, and location. For accurate budgeting, I recommend getting quotes from local contractors and suppliers. Would you like some general cost-saving tips for your project?';
-  } else {
-    // Default response with a suggestion to be more specific
-    return 'I\'m your DIY construction assistant. I can help with home improvement projects, material recommendations, and step-by-step instructions. Could you tell me more about your specific project? For example, which room are you working on?';
-  }
 }
