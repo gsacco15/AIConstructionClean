@@ -11,34 +11,76 @@ const openai = new OpenAI({
 const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
 
 export async function POST(request: Request) {
+  // Add debug logs to help troubleshoot issues
+  console.log('API route called with OpenAI API Key present:', !!process.env.OPENAI_API_KEY);
+  console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
+  console.log('NEXT_PUBLIC_MOCK_MODE:', process.env.NEXT_PUBLIC_MOCK_MODE);
+  
   try {
     const body = await request.json();
     const { action, threadId, message } = body;
-
+    
+    console.log('API request action:', action);
+    console.log('API request threadId:', threadId);
+    
     // Use mock mode if API key is missing or if explicitly enabled
     const useMockMode = !process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
     
     if (useMockMode) {
+      console.log('Using mock mode for OpenAI response');
       return handleMockResponse(action, message);
     }
     
-    switch (action) {
-      case 'createThread':
-        return await handleCreateThread(message);
-      case 'sendMessage':
-        return await handleSendMessage(threadId, message);
-      case 'generateRecommendations':
-        return await handleGenerateRecommendations(threadId);
-      default:
-        return NextResponse.json(
-          { success: false, error: 'Invalid action' },
-          { status: 400 }
-        );
+    // Verify the OpenAI API key and Assistant ID
+    if (!process.env.OPENAI_API_KEY) {
+      console.error('OpenAI API key is missing');
+      return NextResponse.json(
+        { success: false, error: 'OpenAI API key is missing' },
+        { status: 500 }
+      );
+    }
+    
+    if (!ASSISTANT_ID) {
+      console.error('OpenAI Assistant ID is missing');
+      return NextResponse.json(
+        { success: false, error: 'OpenAI Assistant ID is missing' },
+        { status: 500 }
+      );
+    }
+    
+    try {
+      switch (action) {
+        case 'createThread':
+          return await handleCreateThread(message);
+        case 'sendMessage':
+          return await handleSendMessage(threadId, message);
+        case 'generateRecommendations':
+          return await handleGenerateRecommendations(threadId);
+        default:
+          return NextResponse.json(
+            { success: false, error: 'Invalid action' },
+            { status: 400 }
+          );
+      }
+    } catch (openaiError) {
+      console.error('OpenAI API error:', openaiError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'OpenAI API error', 
+          details: openaiError instanceof Error ? openaiError.message : String(openaiError) 
+        },
+        { status: 500 }
+      );
     }
   } catch (error) {
     console.error('API route error:', error);
     return NextResponse.json(
-      { success: false, error: 'Error processing request' }, 
+      { 
+        success: false, 
+        error: 'Error processing request',
+        details: error instanceof Error ? error.message : String(error)
+      }, 
       { status: 500 }
     );
   }
@@ -46,33 +88,47 @@ export async function POST(request: Request) {
 
 // Handler functions for each action
 async function handleCreateThread(message: string) {
-  // Create a thread and send initial message
-  const thread = await openai.beta.threads.create();
+  console.log('Creating thread with message:', message);
   
-  if (message) {
-    await openai.beta.threads.messages.create(thread.id, {
-      role: 'user',
-      content: message,
-    });
+  try {
+    // Create a thread
+    const thread = await openai.beta.threads.create();
+    console.log('Thread created:', thread.id);
     
-    const run = await openai.beta.threads.runs.create(thread.id, {
-      assistant_id: ASSISTANT_ID,
-    });
+    if (message) {
+      // Add the user's message to the thread
+      await openai.beta.threads.messages.create(thread.id, {
+        role: 'user',
+        content: message,
+      });
+      console.log('Message added to thread');
+      
+      // Run the assistant
+      const run = await openai.beta.threads.runs.create(thread.id, {
+        assistant_id: ASSISTANT_ID,
+      });
+      console.log('Run created:', run.id);
+      
+      // Wait for completion
+      await waitForRunCompletion(thread.id, run.id);
+      console.log('Run completed');
+      
+      // Get the response
+      const response = await getLatestAssistantMessage(thread.id);
+      console.log('Got response from assistant');
+      
+      return NextResponse.json({ 
+        success: true, 
+        threadId: thread.id,
+        message: response
+      });
+    }
     
-    // Wait for completion
-    await waitForRunCompletion(thread.id, run.id);
-    
-    // Get the response
-    const response = await getLatestAssistantMessage(thread.id);
-    
-    return NextResponse.json({ 
-      success: true, 
-      threadId: thread.id,
-      message: response
-    });
+    return NextResponse.json({ success: true, threadId: thread.id });
+  } catch (error) {
+    console.error('Error in handleCreateThread:', error);
+    throw error;
   }
-  
-  return NextResponse.json({ success: true, threadId: thread.id });
 }
 
 async function handleSendMessage(threadId: string, message: string) {
