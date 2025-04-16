@@ -49,7 +49,7 @@ export default function ChatInterface({
     const lastMessage = messages[messages.length - 1];
     if (lastMessage && lastMessage.role === 'assistant' && isGeneratingRecommendations(lastMessage.content)) {
       setGeneratingRecommendations(true);
-      generateFinalRecommendations();
+      generateRecommendations();
     }
   }, [messages]);
 
@@ -145,19 +145,34 @@ export default function ChatInterface({
     e.preventDefault();
     if (!input.trim() || loading) return;
 
-    // If we have an onStart handler and this is the first user message, call it
-    if (onStart && messages.filter(m => m.role === 'user').length === 0) {
-      onStart(input);
-    }
-
-    // Add user message to chat
-    const userMessage: ChatMessage = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: input,
+    };
+    
+    // Add user message to UI immediately
+    setMessages(prevMessages => [...prevMessages, userMessage]);
     setInput('');
     setLoading(true);
-
+    
+    // If onStart expects a parameter, use an empty string or some default value
+    // If it doesn't expect parameters, just call it without arguments
+    if (onStart && messages.length <= 1) {
+      if (onStart.length > 0) {
+        onStart(userMessage.content);
+      } else {
+        onStart();
+      }
+    }
+    
     try {
-      // Get assistant response using the API route
+      console.log('Sending message to thread:', threadId || 'No thread ID');
+      
+      // If we don't have a thread ID, create one
+      if (!threadId) {
+        console.log('No thread ID available, creating a new thread');
+      }
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -167,63 +182,93 @@ export default function ChatInterface({
           action: threadId ? 'sendMessage' : 'createThread',
           threadId,
           message: userMessage.content,
-          messages: [...messages, userMessage],
-          useMockMode
         }),
       });
       
+      console.log('API response status:', response.status);
+      
       if (!response.ok) {
+        const errorData = await response.json();
+        console.error('API error:', errorData);
         throw new Error(`API responded with status: ${response.status}`);
       }
       
       const data = await response.json();
+      console.log('API response data:', data);
       
-      // If this was a thread creation, save the threadId
-      if (data.threadId && !threadId) {
-        setThreadId(data.threadId);
+      if (data.inProgress && data.runId && threadId) {
+        // Add a typing indicator message
+        const typingMessage: ChatMessage = {
+          role: 'assistant',
+          content: '...',
+          isTyping: true
+        };
+        setMessages(prevMessages => [...prevMessages, typingMessage]);
+        
+        // Wait a bit and then try to get the response again
+        setTimeout(() => {
+          pollForCompletion(threadId, data.runId, 5);
+        }, 2000);
+        
+        return;
       }
       
-      // Add the assistant's response to the chat
+      if (threadId === null && data.threadId) {
+        setThreadId(data.threadId);
+        console.log('Thread created:', data.threadId);
+      }
+      
       if (data.message) {
-        // Check if message contains JSON and extract recommendations
-        const jsonMatch = data.message.match(/\{[\s\S]*"materials"[\s\S]*"tools"[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            const jsonData = JSON.parse(jsonMatch[0]);
-            if (jsonData.materials && jsonData.tools && 
-                Array.isArray(jsonData.materials) && Array.isArray(jsonData.tools)) {
-              console.log('Found recommendations in message:', jsonData);
-              
-              // If we have recommendations and a callback to handle them
-              if (onRecommendationsGenerated) {
-                onRecommendationsGenerated(jsonData);
-              }
-            }
-          } catch (e) {
-            console.error('Error parsing JSON from message:', e);
-          }
+        console.log('Assistant response:', data.message);
+        const assistantMessage: ChatMessage = {
+          role: 'assistant',
+          content: data.message,
+        };
+        
+        // If there's a typing message, replace it
+        if (messages.some(m => m.isTyping)) {
+          setMessages(prevMessages => [
+            ...prevMessages.filter(m => !m.isTyping),
+            assistantMessage
+          ]);
+        } else {
+          setMessages(prevMessages => [...prevMessages, assistantMessage]);
         }
         
-        // Filter the JSON from the message for display
-        const filteredMessage = filterJsonFromMessage(data.message);
-        
-        setMessages(prev => [...prev, { role: 'assistant', content: filteredMessage }]);
-      } else {
-        throw new Error('No message in response');
+        // Check if the response contains recommendations
+        if (!isGeneratingRecommendations) {
+          const jsonData = filterJsonFromMessage(data.message);
+          if (jsonData && typeof jsonData === 'object' && 'materials' in jsonData && 'tools' in jsonData) {
+            setGeneratingRecommendations(true);
+            
+            // Generate recommendations if we have onRecommendationsGenerated handler
+            if (onRecommendationsGenerated) {
+              generateRecommendations(messages);
+            }
+          }
+        }
       }
+      
+      setLoading(false);
     } catch (error) {
       console.error('Error sending message:', error);
-      // Add error message
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: 'Sorry, I encountered an error. Please try again.' 
-      }]);
-    } finally {
+      // Add error message to chat
+      const errorMessage: ChatMessage = {
+        role: 'system',
+        content: `There was an error communicating with the assistant. Please try again. (${error})`
+      };
+      
+      // Remove typing indicator if any
+      setMessages(prevMessages => [
+        ...prevMessages.filter(m => !m.isTyping),
+        errorMessage
+      ]);
+      
       setLoading(false);
     }
   };
 
-  const generateFinalRecommendations = async () => {
+  const generateRecommendations = async () => {
     try {
       // Give a slight delay for better UX
       setTimeout(async () => {
@@ -287,6 +332,81 @@ export default function ChatInterface({
       window.localStorage.setItem('useMockMode', String(newValue));
     }
   };
+
+  // Add a new function to poll for completion
+  async function pollForCompletion(threadId: string, runId: string, maxAttempts: number) {
+    let attempts = 0;
+    
+    const checkCompletion = async () => {
+      attempts++;
+      console.log(`Polling for completion (attempt ${attempts}/${maxAttempts})...`);
+      
+      try {
+        const response = await fetch('/api/chat/poll', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            threadId,
+            runId
+          }),
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Polling failed with status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && data.completed) {
+          // Run completed, update the typing message
+          if (data.message) {
+            console.log('Assistant response received from polling:', data.message);
+            
+            const assistantMessage: ChatMessage = {
+              role: 'assistant',
+              content: data.message,
+            };
+            
+            // Replace typing indicator
+            setMessages(prevMessages => [
+              ...prevMessages.filter(m => !m.isTyping),
+              assistantMessage
+            ]);
+            
+            setLoading(false);
+            return true;
+          }
+        } else if (attempts < maxAttempts) {
+          // Not completed yet, try again after a delay
+          setTimeout(checkCompletion, 2000);
+          return false;
+        } else {
+          // Max attempts reached
+          throw new Error('Max polling attempts reached');
+        }
+      } catch (error) {
+        console.error('Error polling for completion:', error);
+        
+        // Replace typing indicator with error message
+        const errorMessage: ChatMessage = {
+          role: 'system',
+          content: 'The assistant is taking too long to respond. Please try sending your message again.'
+        };
+        
+        setMessages(prevMessages => [
+          ...prevMessages.filter(m => !m.isTyping),
+          errorMessage
+        ]);
+        
+        setLoading(false);
+        return false;
+      }
+    };
+    
+    await checkCompletion();
+  }
 
   return (
     <div className={`flex flex-col ${!inputOnly ? 'h-[500px]' : ''}`}>

@@ -124,6 +124,7 @@ async function handleCreateThread(message: string) {
   }
 }
 
+// Handler for sending a message and getting a response
 async function handleSendMessage(threadId: string, message: string) {
   console.log('Sending message to thread:', threadId, 'Message:', message);
   
@@ -141,17 +142,37 @@ async function handleSendMessage(threadId: string, message: string) {
     });
     console.log('Run created:', run.id);
     
-    // Wait for completion
-    await waitForRunCompletion(threadId, run.id);
-    console.log('Run completed');
+    // If the run is already completed, return the response
+    if (run.status === 'completed') {
+      const response = await getLatestAssistantMessage(threadId);
+      console.log('Got immediate response from assistant');
+      return NextResponse.json({ success: true, message: response });
+    }
     
-    // Get the response
-    const response = await getLatestAssistantMessage(threadId);
-    console.log('Got response from assistant');
+    // If the run is still in progress after our limited polling,
+    // we'll return a special response to let the client know to check again
+    const runAfterWaiting = await waitForRunCompletion(threadId, run.id);
     
-    return NextResponse.json({ success: true, message: response });
-  } catch (error) {
-    console.error('Error in handleSendMessage:', error);
+    if (runAfterWaiting.status === 'completed') {
+      // Run completed, get the response
+      const response = await getLatestAssistantMessage(threadId);
+      console.log('Got response from assistant after waiting');
+      return NextResponse.json({ success: true, message: response });
+    } else if (runAfterWaiting.status === 'in_progress') {
+      // Still in progress, tell the client to check again
+      console.log('Run still in progress, returning partial response');
+      return NextResponse.json({ 
+        success: true, 
+        inProgress: true,
+        runId: run.id,
+        message: "I'm still thinking about that. Please wait a moment and try again."
+      });
+    } else {
+      // Something else went wrong
+      throw new Error(`Run ended with unexpected status: ${runAfterWaiting.status}`);
+    }
+  } catch (error: any) {
+    console.error('Error in handleSendMessage:', error.message || String(error));
     throw error;
   }
 }
@@ -218,12 +239,16 @@ async function handleGenerateRecommendations(threadId: string) {
 // Helper function to wait for a run to complete
 async function waitForRunCompletion(threadId: string, runId: string) {
   let run;
+  let attempts = 0;
+  const maxAttempts = 10; // Reduced number of attempts to avoid timeout
+  const initialDelay = 300; // Start with shorter delays
   
-  // Poll for status every 1 second
+  // Poll for status with increasing delays
   do {
+    attempts++;
     run = await openai.beta.threads.runs.retrieve(threadId, runId);
     
-    console.log('Run status:', run.status);
+    console.log(`Run status (attempt ${attempts}/${maxAttempts}):`, run.status);
     
     if (run.status === 'requires_action') {
       // Handle if function calling is required (not used in this basic example)
@@ -238,14 +263,25 @@ async function waitForRunCompletion(threadId: string, runId: string) {
       if (run.last_error) {
         console.error('Error:', run.last_error);
       }
+      throw new Error(`Run failed with status: ${run.status}`);
+    }
+    
+    if (run.status === 'completed') {
+      console.log('Run completed successfully');
       break;
     }
     
-    if (run.status !== 'completed') {
-      // Wait before checking again
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    // If we're reaching our attempt limit and still not complete, return anyway
+    // to avoid a timeout - client can poll again if needed
+    if (attempts >= maxAttempts && run.status === 'in_progress') {
+      console.log('Maximum attempts reached but run still in progress. Returning early to avoid timeout.');
+      break;
     }
-  } while (run.status !== 'completed');
+    
+    // Wait with exponential backoff, but cap at 1 second to avoid timeouts
+    const delay = Math.min(initialDelay * Math.pow(1.5, attempts - 1), 1000);
+    await new Promise(resolve => setTimeout(resolve, delay));
+  } while (attempts < maxAttempts);
   
   return run;
 }

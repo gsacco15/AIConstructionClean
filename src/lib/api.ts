@@ -10,6 +10,7 @@ export type ConversationStep = 'initial' | 'location' | 'type' | 'material' | 'f
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  isTyping?: boolean; // Optional property to indicate typing status
 }
 
 // Track the conversation thread
