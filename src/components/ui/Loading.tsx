@@ -21,9 +21,9 @@ export default function Loading({ size = 'md', color = 'primary', className = ''
   };
   
   return (
-    <div className={lex items-center justify-center }>
+    <div className={`flex items-center justify-center ${className}`}>
       <svg 
-        className={nimate-spin  } 
+        className={`animate-spin ${sizeClasses[size]} ${colorClasses[color]}`} 
         xmlns="http://www.w3.org/2000/svg" 
         fill="none" 
         viewBox="0 0 24 24"
