@@ -7,34 +7,13 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 });
 
-// The Assistant ID to use
-let ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
+// The Assistant ID to use - directly use the one from environment variables
+const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
 
-// Flag to track if we're already creating an assistant
-let isCreatingAssistant = false;
-
-// Function to check if an assistant exists
-async function checkAssistant() {
-  if (!ASSISTANT_ID) {
-    return false;
-  }
-  
-  try {
-    const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
-    console.log('Assistant exists:', assistant.id);
-    return true;
-  } catch (error) {
-    console.log('Assistant does not exist or cannot be accessed');
-    return false;
-  }
-}
-
-// Alternative approach: use a simpler flow for the initial request
-// and defer the assistant creation to avoid timeouts
 export async function POST(request: Request) {
   // Add debug logs to help troubleshoot issues
   console.log('API route called with OpenAI API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
-  console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
+  console.log('API route called with Assistant ID:', ASSISTANT_ID);
   
   try {
     const body = await request.json();
@@ -52,61 +31,40 @@ export async function POST(request: Request) {
       );
     }
     
-    // For initial thread creation, just send a "creating assistant" response
-    // to avoid timeout while the assistant is being created
-    if (action === 'createThread' && !await checkAssistant() && !isCreatingAssistant) {
-      isCreatingAssistant = true;
-      
-      // Start the assistant creation process in the background
-      // This won't block the response but might still create the assistant
-      createAssistant().catch(error => {
-        console.error("Failed to create assistant in background:", error);
-        isCreatingAssistant = false;
-      });
-      
-      // Return a special response indicating the assistant is being created
-      console.log('Returning setup-in-progress response');
-      return NextResponse.json({
-        success: true,
-        setupInProgress: true,
-        message: "I'm setting up the assistant for the first time. Please try again in about 15 seconds."
-      });
+    // Verify the Assistant ID exists
+    if (!ASSISTANT_ID) {
+      console.error('OpenAI Assistant ID is missing');
+      return NextResponse.json(
+        { success: false, error: 'OpenAI Assistant ID is missing' },
+        { status: 500 }
+      );
     }
     
-    // If we already have a valid assistant ID, use it
-    if (await checkAssistant()) {
-      try {
-        switch (action) {
-          case 'createThread':
-            return await handleCreateThread(message);
-          case 'sendMessage':
-            return await handleSendMessage(threadId, message);
-          case 'generateRecommendations':
-            return await handleGenerateRecommendations(threadId);
-          default:
-            return NextResponse.json(
-              { success: false, error: 'Invalid action' },
-              { status: 400 }
-            );
-        }
-      } catch (openaiError) {
-        console.error('OpenAI API error:', openaiError);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: 'OpenAI API error', 
-            details: openaiError instanceof Error ? openaiError.message : String(openaiError) 
-          },
-          { status: 500 }
-        );
+    // Process the request directly using the provided assistant ID
+    try {
+      switch (action) {
+        case 'createThread':
+          return await handleCreateThread(message);
+        case 'sendMessage':
+          return await handleSendMessage(threadId, message);
+        case 'generateRecommendations':
+          return await handleGenerateRecommendations(threadId);
+        default:
+          return NextResponse.json(
+            { success: false, error: 'Invalid action' },
+            { status: 400 }
+          );
       }
-    } else {
-      // The assistant doesn't exist and we're not already creating one
-      return NextResponse.json({
-        success: false,
-        error: 'Assistant not configured',
-        message: "The assistant is not yet configured. Please try again in a few moments."
-      });
+    } catch (openaiError) {
+      console.error('OpenAI API error:', openaiError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'OpenAI API error', 
+          details: openaiError instanceof Error ? openaiError.message : String(openaiError) 
+        },
+        { status: 500 }
+      );
     }
   } catch (error) {
     console.error('API route error:', error);
@@ -118,60 +76,6 @@ export async function POST(request: Request) {
       }, 
       { status: 500 }
     );
-  }
-}
-
-// Separate function to create an assistant without blocking the response
-async function createAssistant() {
-  console.log('Creating a new assistant...');
-  
-  try {
-    const assistant = await openai.beta.assistants.create({
-      name: "AI Construction Assistant",
-      description: "A helpful AI assistant for construction and DIY projects",
-      instructions: `You are an AI Construction Assistant that helps users with their DIY construction and renovation projects. Your primary role is to provide expert advice on construction methods, materials selection, tool recommendations, and step-by-step guidance.
-
-KEY RESPONSIBILITIES:
-1. Provide clear, practical advice for home renovation and construction projects
-2. Recommend specific tools and materials appropriate for the user's project
-3. Explain construction techniques and best practices
-4. Answer questions about building codes and safety considerations
-5. Help troubleshoot common construction problems
-
-WHEN PROVIDING RECOMMENDATIONS:
-When asked directly for recommendations or when a project description clearly requires specific materials and tools, provide your recommendations in both prose AND in a structured JSON format that includes materials and tools arrays. This format will be used by the application to display a shopping list to the user.
-
-Use this JSON format:
-{
-  "materials": [
-    { "name": "Material 1" },
-    { "name": "Material 2" }
-  ],
-  "tools": [
-    { "name": "Tool 1" },
-    { "name": "Tool 2" }
-  ]
-}
-
-Always tailor your recommendations to the specific project, considering factors like skill level, budget, and project scope. Be specific with your material and tool recommendations (e.g., "1/2-inch PVC pipe" rather than just "PVC pipe").
-
-Keep your responses concise, practical, and focused on helping the user complete their project successfully.`,
-      model: "gpt-4",
-    });
-    
-    console.log('Created new assistant:', assistant.id);
-    
-    // Update the assistant ID for future use
-    ASSISTANT_ID = assistant.id;
-    
-    // Reset the flag
-    isCreatingAssistant = false;
-    
-    return assistant.id;
-  } catch (error) {
-    console.error('Failed to create assistant:', error);
-    isCreatingAssistant = false;
-    throw error;
   }
 }
 
@@ -311,8 +215,7 @@ async function handleGenerateRecommendations(threadId: string) {
   }
 }
 
-// Helper functions
-
+// Helper function to wait for a run to complete
 async function waitForRunCompletion(threadId: string, runId: string) {
   let run;
   
@@ -347,6 +250,7 @@ async function waitForRunCompletion(threadId: string, runId: string) {
   return run;
 }
 
+// Helper function to get the latest assistant message
 async function getLatestAssistantMessage(threadId: string) {
   const messages = await openai.beta.threads.messages.list(threadId, {
     order: 'desc',
@@ -400,12 +304,14 @@ function extractJsonFromMessage(message: string): { materials: Array<{ name: str
   return null;
 }
 
+// Helper function to create an affiliate link
 function createAffiliateLink(itemName: string): string {
   const affiliateTag = process.env.NEXT_PUBLIC_AFFILIATE_TAG || 'diyassistant-20';
   const searchQuery = encodeURIComponent(itemName);
   return `https://www.amazon.com/s?k=${searchQuery}&tag=${affiliateTag}`;
 }
 
+// Fallback recommendations if the AI fails to generate them
 function getFallbackRecommendations() {
   return {
     materials: [
