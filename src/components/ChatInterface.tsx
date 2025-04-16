@@ -26,6 +26,7 @@ export default function ChatInterface({
   const [loading, setLoading] = useState(false);
   const [generatingRecommendations, setGeneratingRecommendations] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [useMockMode, setUseMockMode] = useState(typeof window !== 'undefined' && window.localStorage.getItem('useMockMode') === 'true');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of chat when messages change
@@ -167,6 +168,7 @@ export default function ChatInterface({
           threadId,
           message: userMessage.content,
           messages: [...messages, userMessage],
+          useMockMode
         }),
       });
       
@@ -277,6 +279,15 @@ export default function ChatInterface({
     }
   };
 
+  // Toggle mock mode
+  const toggleMockMode = () => {
+    const newValue = !useMockMode;
+    setUseMockMode(newValue);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('useMockMode', String(newValue));
+    }
+  };
+
   return (
     <div className={`flex flex-col ${!inputOnly ? 'h-[500px]' : ''}`}>
       {!hideMessages && !inputOnly && (
@@ -316,6 +327,21 @@ export default function ChatInterface({
               <div className="bg-[rgba(151,71,255,0.1)] text-[rgba(151,71,255,1)] rounded-full px-4 py-2">
                 Generating your recommendations...
               </div>
+            </div>
+          )}
+          
+          {/* Development mode toggle for mock mode */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="fixed bottom-20 right-4 bg-white p-2 rounded-lg shadow-md z-50">
+              <label className="flex items-center space-x-2 text-sm">
+                <input 
+                  type="checkbox" 
+                  checked={useMockMode} 
+                  onChange={toggleMockMode}
+                  className="form-checkbox h-4 w-4 text-blue-600"
+                />
+                <span>Mock Mode {useMockMode ? 'ON' : 'OFF'}</span>
+              </label>
             </div>
           )}
         </div>

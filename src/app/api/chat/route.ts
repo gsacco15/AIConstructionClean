@@ -12,19 +12,22 @@ const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
 
 export async function POST(request: Request) {
   // Add debug logs to help troubleshoot issues
-  console.log('API route called with OpenAI API Key present:', !!process.env.OPENAI_API_KEY);
+  console.log('API route called with OpenAI API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
   console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
   console.log('NEXT_PUBLIC_MOCK_MODE:', process.env.NEXT_PUBLIC_MOCK_MODE);
   
   try {
     const body = await request.json();
-    const { action, threadId, message } = body;
+    const { action, threadId, message, useMockMode: clientMockMode } = body;
     
     console.log('API request action:', action);
     console.log('API request threadId:', threadId);
+    console.log('Client requested mock mode:', clientMockMode);
     
-    // Use mock mode if API key is missing or if explicitly enabled
-    const useMockMode = !process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
+    // Use mock mode if API key is missing, if explicitly enabled in env, or if client requested it
+    const useMockMode = !process.env.OPENAI_API_KEY || 
+                        process.env.NEXT_PUBLIC_MOCK_MODE === 'true' || 
+                        clientMockMode === true;
     
     if (useMockMode) {
       console.log('Using mock mode for OpenAI response');
@@ -44,6 +47,25 @@ export async function POST(request: Request) {
       console.error('OpenAI Assistant ID is missing');
       return NextResponse.json(
         { success: false, error: 'OpenAI Assistant ID is missing' },
+        { status: 500 }
+      );
+    }
+    
+    // Verify the assistant exists
+    try {
+      console.log('Attempting to retrieve assistant with ID:', ASSISTANT_ID);
+      // Try to retrieve the assistant to verify it exists before proceeding
+      const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
+      console.log('Assistant exists:', assistant.id, 'Model:', assistant.model);
+    } catch (assistantError) {
+      console.error('Failed to retrieve assistant:', assistantError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Failed to retrieve assistant', 
+          details: assistantError instanceof Error ? assistantError.message : String(assistantError),
+          assistantId: ASSISTANT_ID
+        },
         { status: 500 }
       );
     }
