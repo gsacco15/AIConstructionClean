@@ -17,12 +17,7 @@ let threadId: string | null = null;
 
 // Get the API base URL
 const getApiBaseUrl = () => {
-  // In production on Netlify, use the Netlify functions
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    console.log('Using Netlify functions API');
-    return '/.netlify/functions';
-  }
-  // For local development, use the Next.js API routes
+  // Always use Next.js API routes - we're not using Netlify functions
   console.log('Using Next.js API routes');
   return '/api';
 };
