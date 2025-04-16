@@ -8,7 +8,70 @@ const openai = new OpenAI({
 });
 
 // The Assistant ID to use
-const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
+let ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
+
+// Function to get or create an assistant
+async function getOrCreateAssistant() {
+  // If we already have a valid ID stored in memory, return it
+  if (ASSISTANT_ID && ASSISTANT_ID !== 'asst_Vyg9xBn8t8QZtdYwdJRTZAr1') {
+    try {
+      const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
+      console.log('Using existing assistant:', assistant.id);
+      return assistant.id;
+    } catch (error) {
+      console.log('Stored assistant ID invalid, creating new one');
+      // Continue to create a new assistant below
+    }
+  }
+
+  console.log('Creating a new assistant...');
+  
+  // Create a new assistant
+  try {
+    const assistant = await openai.beta.assistants.create({
+      name: "AI Construction Assistant",
+      description: "A helpful AI assistant for construction and DIY projects",
+      instructions: `You are an AI Construction Assistant that helps users with their DIY construction and renovation projects. Your primary role is to provide expert advice on construction methods, materials selection, tool recommendations, and step-by-step guidance.
+
+KEY RESPONSIBILITIES:
+1. Provide clear, practical advice for home renovation and construction projects
+2. Recommend specific tools and materials appropriate for the user's project
+3. Explain construction techniques and best practices
+4. Answer questions about building codes and safety considerations
+5. Help troubleshoot common construction problems
+
+WHEN PROVIDING RECOMMENDATIONS:
+When asked directly for recommendations or when a project description clearly requires specific materials and tools, provide your recommendations in both prose AND in a structured JSON format that includes materials and tools arrays. This format will be used by the application to display a shopping list to the user.
+
+Use this JSON format:
+{
+  "materials": [
+    { "name": "Material 1" },
+    { "name": "Material 2" }
+  ],
+  "tools": [
+    { "name": "Tool 1" },
+    { "name": "Tool 2" }
+  ]
+}
+
+Always tailor your recommendations to the specific project, considering factors like skill level, budget, and project scope. Be specific with your material and tool recommendations (e.g., "1/2-inch PVC pipe" rather than just "PVC pipe").
+
+Keep your responses concise, practical, and focused on helping the user complete their project successfully.`,
+      model: "gpt-4o",
+    });
+    
+    console.log('Created new assistant:', assistant.id);
+    
+    // Update the assistant ID for future use
+    ASSISTANT_ID = assistant.id;
+    
+    return assistant.id;
+  } catch (error) {
+    console.error('Failed to create assistant:', error);
+    throw error;
+  }
+}
 
 export async function POST(request: Request) {
   // Add debug logs to help troubleshoot issues
@@ -22,7 +85,7 @@ export async function POST(request: Request) {
     console.log('API request action:', action);
     console.log('API request threadId:', threadId);
     
-    // Verify the OpenAI API key and Assistant ID
+    // Verify the OpenAI API key
     if (!process.env.OPENAI_API_KEY) {
       console.error('OpenAI API key is missing');
       return NextResponse.json(
@@ -31,28 +94,18 @@ export async function POST(request: Request) {
       );
     }
     
-    if (!ASSISTANT_ID) {
-      console.error('OpenAI Assistant ID is missing');
-      return NextResponse.json(
-        { success: false, error: 'OpenAI Assistant ID is missing' },
-        { status: 500 }
-      );
-    }
-    
-    // Verify the assistant exists
+    // Get or create an assistant
     try {
-      console.log('Attempting to retrieve assistant with ID:', ASSISTANT_ID);
-      // Try to retrieve the assistant to verify it exists before proceeding
-      const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
-      console.log('Assistant exists:', assistant.id, 'Model:', assistant.model);
+      console.log('Getting or creating assistant...');
+      ASSISTANT_ID = await getOrCreateAssistant();
+      console.log('Using assistant ID:', ASSISTANT_ID);
     } catch (assistantError) {
-      console.error('Failed to retrieve assistant:', assistantError);
+      console.error('Failed to get or create assistant:', assistantError);
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Failed to retrieve assistant', 
-          details: assistantError instanceof Error ? assistantError.message : String(assistantError),
-          assistantId: ASSISTANT_ID
+          error: 'Failed to get or create assistant', 
+          details: assistantError instanceof Error ? assistantError.message : String(assistantError)
         },
         { status: 500 }
       );
