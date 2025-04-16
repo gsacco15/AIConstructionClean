@@ -41,7 +41,7 @@ export default function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={${baseClasses}    }
+      className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${disabledClasses} ${className}`}
     >
       {children}
     </button>
