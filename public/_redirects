@@ -1,0 +1,10 @@
+# Redirects for Netlify - this is a fallback in case netlify.toml is not processed
+
+# API routes
+/api/*  /.netlify/functions/nextjs-server/api/:splat  200
+
+# Next.js asset files
+/_next/*  /_next/:splat  200
+
+# SPA fallback - this must be the last rule
+/*  /index.html  200 

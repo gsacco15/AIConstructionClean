@@ -1,6 +1,7 @@
 [build]
   command = "npm run build"
   publish = ".next"
+  functions = "netlify/functions"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
@@ -11,8 +12,28 @@
   to = "/.netlify/functions/nextjs-server/api/:splat"
   status = 200
 
-# Fallback redirects for SPA
+# Handle Next.js pages correctly
+[[redirects]]
+  from = "/_next/*"
+  to = "/_next/:splat"
+  status = 200
+
+# Create a dedicated redirect for the root page
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/nextjs-server"
+  status = 200
+
+# SPA fallback for client-side routing - must come last
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/nextjs-server"
-  status = 200 
+  status = 200
+
+# Add custom headers to avoid caching issues
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    Cache-Control = "public, max-age=0, must-revalidate" 
