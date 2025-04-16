@@ -10,7 +10,7 @@ interface CardProps {
 export default function Card({ children, className = '', onClick }: CardProps) {
   return (
     <div 
-      className={g-white rounded-lg shadow-md overflow-hidden transition-all hover:shadow-lg }
+      className={`bg-white rounded-lg shadow-md overflow-hidden transition-all hover:shadow-lg ${className}`}
       onClick={onClick}
     >
       {children}
@@ -20,7 +20,7 @@ export default function Card({ children, className = '', onClick }: CardProps) {
 
 export function CardHeader({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={p-4 border-b }>
+    <div className={`p-4 border-b ${className}`}>
       {children}
     </div>
   );
@@ -28,7 +28,7 @@ export function CardHeader({ children, className = '' }: { children: React.React
 
 export function CardContent({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={p-4 }>
+    <div className={`p-4 ${className}`}>
       {children}
     </div>
   );
@@ -36,7 +36,7 @@ export function CardContent({ children, className = '' }: { children: React.Reac
 
 export function CardFooter({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={p-4 border-t bg-gray-50 }>
+    <div className={`p-4 border-t bg-gray-50 ${className}`}>
       {children}
     </div>
   );
