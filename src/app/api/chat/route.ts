@@ -10,23 +10,121 @@ const openai = new OpenAI({
 // The Assistant ID to use
 let ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || '';
 
-// Function to get or create an assistant
-async function getOrCreateAssistant() {
-  // If we already have a valid ID stored in memory, return it
-  if (ASSISTANT_ID && ASSISTANT_ID !== 'asst_Vyg9xBn8t8QZtdYwdJRTZAr1') {
-    try {
-      const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
-      console.log('Using existing assistant:', assistant.id);
-      return assistant.id;
-    } catch (error) {
-      console.log('Stored assistant ID invalid, creating new one');
-      // Continue to create a new assistant below
-    }
-  }
+// Flag to track if we're already creating an assistant
+let isCreatingAssistant = false;
 
+// Function to check if an assistant exists
+async function checkAssistant() {
+  if (!ASSISTANT_ID) {
+    return false;
+  }
+  
+  try {
+    const assistant = await openai.beta.assistants.retrieve(ASSISTANT_ID);
+    console.log('Assistant exists:', assistant.id);
+    return true;
+  } catch (error) {
+    console.log('Assistant does not exist or cannot be accessed');
+    return false;
+  }
+}
+
+// Alternative approach: use a simpler flow for the initial request
+// and defer the assistant creation to avoid timeouts
+export async function POST(request: Request) {
+  // Add debug logs to help troubleshoot issues
+  console.log('API route called with OpenAI API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
+  console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
+  
+  try {
+    const body = await request.json();
+    const { action, threadId, message } = body;
+    
+    console.log('API request action:', action);
+    console.log('API request threadId:', threadId);
+    
+    // Verify the OpenAI API key
+    if (!process.env.OPENAI_API_KEY) {
+      console.error('OpenAI API key is missing');
+      return NextResponse.json(
+        { success: false, error: 'OpenAI API key is missing' },
+        { status: 500 }
+      );
+    }
+    
+    // For initial thread creation, just send a "creating assistant" response
+    // to avoid timeout while the assistant is being created
+    if (action === 'createThread' && !await checkAssistant() && !isCreatingAssistant) {
+      isCreatingAssistant = true;
+      
+      // Start the assistant creation process in the background
+      // This won't block the response but might still create the assistant
+      createAssistant().catch(error => {
+        console.error("Failed to create assistant in background:", error);
+        isCreatingAssistant = false;
+      });
+      
+      // Return a special response indicating the assistant is being created
+      console.log('Returning setup-in-progress response');
+      return NextResponse.json({
+        success: true,
+        setupInProgress: true,
+        message: "I'm setting up the assistant for the first time. Please try again in about 15 seconds."
+      });
+    }
+    
+    // If we already have a valid assistant ID, use it
+    if (await checkAssistant()) {
+      try {
+        switch (action) {
+          case 'createThread':
+            return await handleCreateThread(message);
+          case 'sendMessage':
+            return await handleSendMessage(threadId, message);
+          case 'generateRecommendations':
+            return await handleGenerateRecommendations(threadId);
+          default:
+            return NextResponse.json(
+              { success: false, error: 'Invalid action' },
+              { status: 400 }
+            );
+        }
+      } catch (openaiError) {
+        console.error('OpenAI API error:', openaiError);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'OpenAI API error', 
+            details: openaiError instanceof Error ? openaiError.message : String(openaiError) 
+          },
+          { status: 500 }
+        );
+      }
+    } else {
+      // The assistant doesn't exist and we're not already creating one
+      return NextResponse.json({
+        success: false,
+        error: 'Assistant not configured',
+        message: "The assistant is not yet configured. Please try again in a few moments."
+      });
+    }
+  } catch (error) {
+    console.error('API route error:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: 'Error processing request',
+        details: error instanceof Error ? error.message : String(error)
+      }, 
+      { status: 500 }
+    );
+  }
+}
+
+// Separate function to create an assistant without blocking the response
+async function createAssistant() {
   console.log('Creating a new assistant...');
   
-  // Create a new assistant
   try {
     const assistant = await openai.beta.assistants.create({
       name: "AI Construction Assistant",
@@ -58,7 +156,7 @@ Use this JSON format:
 Always tailor your recommendations to the specific project, considering factors like skill level, budget, and project scope. Be specific with your material and tool recommendations (e.g., "1/2-inch PVC pipe" rather than just "PVC pipe").
 
 Keep your responses concise, practical, and focused on helping the user complete their project successfully.`,
-      model: "gpt-4o",
+      model: "gpt-4",
     });
     
     console.log('Created new assistant:', assistant.id);
@@ -66,86 +164,14 @@ Keep your responses concise, practical, and focused on helping the user complete
     // Update the assistant ID for future use
     ASSISTANT_ID = assistant.id;
     
+    // Reset the flag
+    isCreatingAssistant = false;
+    
     return assistant.id;
   } catch (error) {
     console.error('Failed to create assistant:', error);
+    isCreatingAssistant = false;
     throw error;
-  }
-}
-
-export async function POST(request: Request) {
-  // Add debug logs to help troubleshoot issues
-  console.log('API route called with OpenAI API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
-  console.log('API route called with Assistant ID:', process.env.OPENAI_ASSISTANT_ID);
-  
-  try {
-    const body = await request.json();
-    const { action, threadId, message } = body;
-    
-    console.log('API request action:', action);
-    console.log('API request threadId:', threadId);
-    
-    // Verify the OpenAI API key
-    if (!process.env.OPENAI_API_KEY) {
-      console.error('OpenAI API key is missing');
-      return NextResponse.json(
-        { success: false, error: 'OpenAI API key is missing' },
-        { status: 500 }
-      );
-    }
-    
-    // Get or create an assistant
-    try {
-      console.log('Getting or creating assistant...');
-      ASSISTANT_ID = await getOrCreateAssistant();
-      console.log('Using assistant ID:', ASSISTANT_ID);
-    } catch (assistantError) {
-      console.error('Failed to get or create assistant:', assistantError);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Failed to get or create assistant', 
-          details: assistantError instanceof Error ? assistantError.message : String(assistantError)
-        },
-        { status: 500 }
-      );
-    }
-    
-    try {
-      switch (action) {
-        case 'createThread':
-          return await handleCreateThread(message);
-        case 'sendMessage':
-          return await handleSendMessage(threadId, message);
-        case 'generateRecommendations':
-          return await handleGenerateRecommendations(threadId);
-        default:
-          return NextResponse.json(
-            { success: false, error: 'Invalid action' },
-            { status: 400 }
-          );
-      }
-    } catch (openaiError) {
-      console.error('OpenAI API error:', openaiError);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'OpenAI API error', 
-          details: openaiError instanceof Error ? openaiError.message : String(openaiError) 
-        },
-        { status: 500 }
-      );
-    }
-  } catch (error) {
-    console.error('API route error:', error);
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: 'Error processing request',
-        details: error instanceof Error ? error.message : String(error)
-      }, 
-      { status: 500 }
-    );
   }
 }
 
