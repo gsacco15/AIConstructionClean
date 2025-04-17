@@ -119,6 +119,9 @@ export default function HomePage() {
       setFadeOut(false); // Reset fade-out state
       setFadeIn(false); // Will be set to true by the useEffect
       setLoading(true);
+      // Ensure input is visible in chat mode
+      setShowInput(true);
+      setActiveModule('chat');
       
       // Add user message
       const updatedMessages = [...messages, { role: 'user', content: query }];
@@ -388,12 +391,11 @@ export default function HomePage() {
   const handleScroll = () => {
     const scrollPosition = window.scrollY || document.documentElement.scrollTop;
     
-    // Show input bar when near the top of the page
-    if (scrollPosition < 200) {
+    // Only hide input when not in chat mode
+    if (scrollPosition < 200 || activeModule === 'chat') {
       setShowInput(true);
-      setActiveModule('chat');
     } 
-    // Hide input when scrolled further down
+    // Hide input when scrolled further down and not in chat mode
     else {
       setShowInput(false);
     }
@@ -815,8 +817,8 @@ export default function HomePage() {
         )}
         
         {/* Chat input that stays in the same position during transition - fixed at bottom */}
-        {(showContent || (activeModule === 'chat' && showInput)) && (
-          <div className="fixed bottom-8 left-0 right-0 px-4 z-10">
+        {(showContent || (showInput && (!showContent || activeModule === 'chat'))) && (
+          <div className="fixed bottom-8 left-0 right-0 px-4 z-50">
             <div className="max-w-3xl mx-auto">
               <ChatInput 
                 onSubmit={showContent ? handleChatStart : undefined}

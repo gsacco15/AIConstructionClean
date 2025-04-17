@@ -14,7 +14,7 @@ export default function FeatureCard({
   return (
     <div
       className={`bg-white border flex flex-col justify-between text-[#666666] w-full p-[22px] rounded-[15px] border-[#E6E6E6] border-solid h-full min-h-[220px] text-left font-['Inter'] transition-all duration-300 hover:shadow-lg hover:border-[#9747FF] hover:-translate-y-1 hover:scale-[1.02] cursor-pointer relative group ${className}`}
-      style={{ position: 'relative', zIndex: 5 }}
+      style={{ position: 'relative', zIndex: 1 }}
     >
       {/* Add radial gradient background that appears on hover */}
       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-[15px] overflow-hidden" style={{ zIndex: -1 }}>
