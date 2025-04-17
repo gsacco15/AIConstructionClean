@@ -34,13 +34,13 @@ export default function ChatInput({
   };
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full max-w-full px-2 md:px-0 my-2">
       <form
         onSubmit={handleSubmit}
         className="bg-[rgba(140,140,140,0.24)] border flex items-center gap-2 md:gap-5 justify-between px-3 md:px-6 py-2 md:py-3 rounded-[39px] border-[rgba(140,140,140,0.1)] border-solid w-full max-w-[95%] md:max-w-[90%] mx-auto relative"
-        style={{ zIndex: 10 }}
+        style={{ zIndex: 50 }}
       >
-        <div className="flex-grow flex items-center">
+        <div className="flex-grow flex items-center w-full min-h-[44px]">
           <input
             type="text"
             value={prompt}
@@ -51,6 +51,11 @@ export default function ChatInput({
               disabled || isLoading ? 'opacity-50' : ''
             }`}
             aria-label="Chat prompt input"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
+            autoComplete="off"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck="false"
           />
         </div>
         <div className="flex-shrink-0">

@@ -818,16 +818,23 @@ export default function HomePage() {
         
         {/* Chat input that stays in the same position during transition - fixed at bottom */}
         {(showContent || (showInput && (!showContent || activeModule === 'chat'))) && (
-          <div className="fixed bottom-8 left-0 right-0 px-4 z-50">
-            <div className="max-w-3xl mx-auto">
-              <ChatInput 
-                onSubmit={showContent ? handleChatStart : undefined}
-                onSendMessage={!showContent ? handleSendMessage : undefined}
-                isLoading={loading}
-                placeholder={showContent ? "What's your construction project?" : "Type your question here..."}
-              />
+          <>
+            {/* Separate gradient layer that appears behind the chat input */}
+            <div className="fixed bottom-0 left-0 right-0 h-60 pointer-events-none" style={{ zIndex: 40 }}>
+              <div className="w-full h-full bg-gradient-to-t from-purple-500/10 via-purple-500/5 to-transparent"></div>
             </div>
-          </div>
+
+            <div className="fixed bottom-8 left-0 right-0 px-4 z-50">
+              <div className="max-w-3xl mx-auto">
+                <ChatInput 
+                  onSubmit={showContent ? handleChatStart : undefined}
+                  onSendMessage={!showContent ? handleSendMessage : undefined}
+                  isLoading={loading}
+                  placeholder={showContent ? "What's your construction project?" : "Type your question here..."}
+                />
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
